@@ -51,13 +51,114 @@ pub fn raw_struct_derive(input: TokenStream) -> TokenStream {
 
     // バリデーションロジックの生成
     let validation_checks = validation_fields.map(|(field_name, field_type)| {
-        quote! {
-            if let Some(value) = &self.#field_name {
-                if value.parse::<#field_type>().is_err() {
-                    errors.add(
-                        stringify!(#field_name),
-                        validator::ValidationError::new("invalid_format")
-                    );
+        let type_str = quote!(#field_type).to_string();
+        
+        match type_str.as_str() {
+            "u8" | "u16" | "u32" | "u64" | "u128" => quote! {
+                if let Some(value) = &self.#field_name {
+                    match value {
+                        v if v.starts_with('-') => {
+                            let mut err = validator::ValidationError::new(stringify!(#field_name));
+                            err.message = Some(format!("フィールド '{}' に負の値 ({}) が指定されましたが、{}型は負の値を受け付けません", 
+                                stringify!(#field_name), 
+                                value,
+                                stringify!(#field_type)
+                            ).into());
+                            errors.add(stringify!(#field_name), err);
+                        },
+                        v => match v.parse::<#field_type>() {
+                            Ok(_) => {},
+                            Err(e) => {
+                                let mut err = validator::ValidationError::new(stringify!(#field_name));
+                                err.message = Some(match e.to_string().contains("invalid digit") {
+                                    true => format!("フィールド '{}' の値 ({}) が数値ではありません", 
+                                        stringify!(#field_name),
+                                        value
+                                    ),
+                                    false => format!("フィールド '{}' の値 ({}) が {}型の範囲（0 ～ {}) を超えています", 
+                                        stringify!(#field_name),
+                                        value,
+                                        stringify!(#field_type),
+                                        #field_type::MAX
+                                    )
+                                }.into());
+                                errors.add(stringify!(#field_name), err);
+                            }
+                        }
+                    }
+                }
+            },
+            "i8" | "i16" | "i32" | "i64" | "i128" => quote! {
+                if let Some(value) = &self.#field_name {
+                    match value.parse::<#field_type>() {
+                        Ok(_) => {},
+                        Err(e) => {
+                            let mut err = validator::ValidationError::new(stringify!(#field_name));
+                            err.message = Some(match e.to_string().contains("invalid digit") {
+                                true => format!("フィールド '{}' の値 ({}) が数値ではありません", 
+                                    stringify!(#field_name),
+                                    value
+                                ),
+                                false => format!("フィールド '{}' の値 ({}) が {}型の範囲（{} ～ {}) を超えています", 
+                                    stringify!(#field_name),
+                                    value,
+                                    stringify!(#field_type),
+                                    #field_type::MIN,
+                                    #field_type::MAX
+                                )
+                            }.into());
+                            errors.add(stringify!(#field_name), err);
+                        }
+                    }
+                }
+            },
+            "f32" | "f64" => quote! {
+                if let Some(value) = &self.#field_name {
+                    match value.parse::<#field_type>() {
+                        Ok(_) => {},
+                        Err(_) => {
+                            let mut err = validator::ValidationError::new(stringify!(#field_name));
+                            err.message = Some(format!("フィールド '{}' の値 ({}) が有効な浮動小数点数ではありません", 
+                                stringify!(#field_name),
+                                value
+                            ).into());
+                            errors.add(stringify!(#field_name), err);
+                        }
+                    }
+                }
+            },
+            "bool" => quote! {
+                if let Some(value) = &self.#field_name {
+                    match value.to_lowercase().as_str() {
+                        "true" | "false" | "1" | "0" => {},
+                        _ => {
+                            let mut err = validator::ValidationError::new(stringify!(#field_name));
+                            err.message = Some(format!("フィールド '{}' の値 ({}) が真偽値ではありません。'true'/'false' または '1'/'0' を使用してください", 
+                                stringify!(#field_name),
+                                value
+                            ).into());
+                            errors.add(stringify!(#field_name), err);
+                        }
+                    }
+                }
+            },
+            "String" => quote! {
+                // String型の場合は常に有効
+            },
+            _ => quote! {
+                if let Some(value) = &self.#field_name {
+                    match value.parse::<#field_type>() {
+                        Ok(_) => {},
+                        Err(_) => {
+                            let mut err = validator::ValidationError::new(stringify!(#field_name));
+                            err.message = Some(format!("フィールド '{}' の値 ({}) が {}型として無効です", 
+                                stringify!(#field_name),
+                                value,
+                                stringify!(#field_type)
+                            ).into());
+                            errors.add(stringify!(#field_name), err);
+                        }
+                    }
                 }
             }
         }
